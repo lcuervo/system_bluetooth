@@ -114,6 +114,7 @@ static int set_bluetooth_power(int on) {
     int ret = -1;
     const char buffer = (on ? '1' : '0');
 
+ALOGI("set bluetooth power %s", on ? "on" : "off");
     if (rfkill_id == -1) {
         if (init_rfkill()) goto out;
     }
@@ -146,6 +147,10 @@ static inline int create_hci_sock() {
     return sk;
 }
 
+#ifdef BOARD_HAVE_BLUETOOTH_CSR
+static const char BTFILTER_NAME[] = "abtfilt";
+#endif
+
 int bt_enable() {
     ALOGV(__FUNCTION__);
 
@@ -153,12 +158,27 @@ int bt_enable() {
     int hci_sock = -1;
     int attempt;
 
+#ifndef BOARD_HAVE_BLUETOOTH_CSR
     if (set_bluetooth_power(1) < 0) goto out;
+#else
+    ALOGI("Starting bccmd command");
+    if (property_set("ctl.start", "bccmd") < 0) {
+        LOGE("Fail to bccmd");
+        goto out;
+    }
+    sleep(5);
+#endif
+
+#if defined(SW_BOARD_HAVE_BLUETOOTH_RTK)
+  usleep(1000000);  // 1 seconds
+#endif
 
     ALOGI("Starting hciattach daemon");
     if (property_set("ctl.start", "hciattach") < 0) {
         ALOGE("Failed to start hciattach");
+        #ifndef BOARD_HAVE_BLUETOOTH_CSR
         set_bluetooth_power(0);
+        #endif
         goto out;
     }
 
@@ -186,14 +206,18 @@ int bt_enable() {
         if (property_set("ctl.stop", "hciattach") < 0) {
             ALOGE("Error stopping hciattach");
         }
+        #ifndef BOARD_HAVE_BLUETOOTH_CSR
         set_bluetooth_power(0);
+	#endif
         goto out;
     }
 
     ALOGI("Starting bluetoothd deamon");
     if (property_set("ctl.start", "bluetoothd") < 0) {
         ALOGE("Failed to start bluetoothd");
+	#ifndef BOARD_HAVE_BLUETOOTH_CSR
         set_bluetooth_power(0);
+	#endif
         goto out;
     }
 
@@ -227,9 +251,18 @@ int bt_disable() {
         goto out;
     }
 
+#ifndef BOARD_HAVE_BLUETOOTH_CSR
     if (set_bluetooth_power(0) < 0) {
         goto out;
     }
+#else
+ 	 268	
+    if (property_set("ctl.stop", BTFILTER_NAME) < 0) {
+        LOGE("Failed to stop abtfilt");
+        goto out;
+    }
+    usleep(1000);
+#endif
     ret = 0;
 
 out:
@@ -244,11 +277,11 @@ int bt_is_enabled() {
     int ret = -1;
     struct hci_dev_info dev_info;
 
-
+#ifndef BOARD_HAVE_BLUETOOTH_CSR
     // Check power first
     ret = check_bluetooth_power();
     if (ret == -1 || ret == 0) goto out;
-
+#endif
     ret = -1;
 
     // Power is on, now check if the HCI interface is up
